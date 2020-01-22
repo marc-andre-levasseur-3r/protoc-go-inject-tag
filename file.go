@@ -9,13 +9,17 @@ import (
 	"log"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 )
 
 var (
-	rComment = regexp.MustCompile(`^//\s*@inject_tag:\s*(.*)$`)
-	rInject  = regexp.MustCompile("`.+`$")
-	rTags    = regexp.MustCompile(`[\w_]+:"[^"]+"`)
+	//TODO validate syntax:
+	subOneofStructRx = regexp.MustCompile(`^//\s\*(\w+)$`)
+	oneOfCommentRx   = regexp.MustCompile(`^//\s*@inject_tag_oneof:\s([\w]+):\s*(.*)$`)
+	rComment         = regexp.MustCompile(`^//\s*@inject_tag:\s*(.*)$`)
+	rInject          = regexp.MustCompile("`.+`$")
+	rTags            = regexp.MustCompile(`[\w_]+:"[^"]+"`)
 )
 
 type textArea struct {
@@ -25,7 +29,27 @@ type textArea struct {
 	InjectTag  string
 }
 
-func parseFile(inputPath string, xxxSkip []string) (areas []textArea, err error) {
+type aeraContainer []textArea
+
+func (a aeraContainer) Len() int {
+	return len(a)
+}
+
+func  (a aeraContainer) Less(i, j int) bool {
+	return a[i].Start < a[j].Start
+}
+
+func (a aeraContainer) Swap(i, j int) {
+	a[i], a[j] = a[j], a[i]
+}
+
+type oneofTagInfo struct {
+	varName string
+	tag     string
+}
+
+func parseFile(inputPath string, xxxSkip []string) (areas aeraContainer, err error) {
+	oneofTags := make(map[string]oneofTagInfo)
 	log.Printf("parsing file %q for inject tag comments", inputPath)
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, inputPath, nil, parser.ParseComments)
@@ -87,12 +111,35 @@ func parseFile(inputPath string, xxxSkip []string) (areas []textArea, err error)
 			if field.Doc == nil {
 				continue
 			}
+
+			oneofStructs := make([]string, 0)
 			for _, comment := range field.Doc.List {
+				match := subOneofStructRx.FindStringSubmatch(comment.Text)
+				if len(match) == 2 {
+					oneofStructs = append(oneofStructs, match[1])
+				}
+			}
+
+			for _, comment := range field.Doc.List {
+				varName, oneofTag := tagOneofFromComment(comment.Text)
+				if varName != "" {
+					varName = strings.Title(varName)
+					mangleName := fmt.Sprintf("%s_%s", typeSpec.Name.String(), varName)
+					for _, structName := range oneofStructs {
+						if strings.Contains(structName, mangleName) {
+							oneofTags[structName] = oneofTagInfo{varName: varName, tag: oneofTag}
+							continue
+						}
+					}
+				}
+
 				tag := tagFromComment(comment.Text)
 				if tag == "" {
 					continue
 				}
 				currentTag := field.Tag.Value
+				fmt.Printf("Field %v\n", field.Names)
+				fmt.Printf("Current tag %s\n", currentTag)
 				area := textArea{
 					Start:      int(field.Pos()),
 					End:        int(field.End()),
@@ -103,11 +150,58 @@ func parseFile(inputPath string, xxxSkip []string) (areas []textArea, err error)
 			}
 		}
 	}
+	//TODO Redo a pass to injects tags according infos from oneof tags
+	for _, decl := range f.Decls {
+		// check if is generic declaration
+		genDecl, ok := decl.(*ast.GenDecl)
+		if !ok {
+			continue
+		}
+
+		var typeSpec *ast.TypeSpec
+		for _, spec := range genDecl.Specs {
+			if ts, tsOK := spec.(*ast.TypeSpec); tsOK {
+				typeSpec = ts
+				break
+			}
+		}
+
+		// skip if can't get type spec
+		if typeSpec == nil {
+			continue
+		}
+		oneofData, ok := oneofTags[typeSpec.Name.String()]
+
+		// Not in the list, skip
+		if !ok {
+			continue
+		}
+
+		// not a struct, skip
+		structDecl, ok := typeSpec.Type.(*ast.StructType)
+		if !ok {
+			continue
+		}
+		field := structDecl.Fields.List[0]
+		currentTag := field.Tag.Value
+		area := textArea{
+			Start:      int(field.Pos()),
+			End:        int(field.End()),
+			CurrentTag: currentTag[1 : len(currentTag)-1],
+			InjectTag:  oneofData.tag,
+		}
+		areas = append(areas, area)
+	}
+	sort.Sort(areas)
 	log.Printf("parsed file %q, number of fields to inject custom tags: %d", inputPath, len(areas))
 	return
 }
 
-func writeFile(inputPath string, areas []textArea) (err error) {
+func aeraReorder(aeras []textArea) {
+
+}
+
+func writeFile(inputPath string, areas aeraContainer) (err error) {
 	f, err := os.Open(inputPath)
 	if err != nil {
 		return

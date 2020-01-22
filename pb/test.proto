@@ -1,5 +1,8 @@
 syntax = "proto3";
 
+import "google/protobuf/any.proto";
+
+
 package pb;
 
 message IP {
@@ -13,4 +16,43 @@ message URL {
   string url = 2;
   // @inject_tag: valid:"nonzero"
   int32 port = 3;
+}
+
+message foobar {
+  message Foo {
+    int32 foo = 1;
+  }
+  message Bar {
+    string bar = 1;
+  }
+  // @inject_tag_oneof: foo: validate:"non-zero"
+  oneof data {
+    Foo foo = 2;
+    Bar bar = 3;
+  }
+}
+
+message errorFoo {
+  string message = 1;
+  // @inject_tag: validate:"dive,required"
+  repeated google.protobuf.Any details = 2;
+}
+
+message BarOpen {
+  // @inject_tag_oneof: foo: validate:"non-zero"
+  // @inject_tag_oneof: bar: validate:"required"
+  // @inject_tag_oneof: baz: validate:"uuidv4"
+  // @inject_tag: validate:"required"
+  oneof data {
+    int32 foo = 1;
+    string bar = 2;
+    int32 baz = 3;
+  }
+}
+
+message Person {
+  // @inject_tag: validate:"required"
+  string name = 1;
+  // @inject_tag: validate:"positive"
+  int32 age = 2;
 }
