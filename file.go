@@ -14,7 +14,6 @@ import (
 )
 
 var (
-	//TODO validate syntax:
 	subOneofStructRx = regexp.MustCompile(`^//\s\*(\w+)$`)
 	oneOfCommentRx   = regexp.MustCompile(`^//\s*@inject_tag_oneof:\s([\w]+):\s*(.*)$`)
 	rComment         = regexp.MustCompile(`^//\s*@inject_tag:\s*(.*)$`)
@@ -112,6 +111,7 @@ func parseFile(inputPath string, xxxSkip []string) (areas aeraContainer, err err
 				continue
 			}
 
+			// If field is oneof, it has generated structs for each alternative. We get the names here
 			oneofStructs := make([]string, 0)
 			for _, comment := range field.Doc.List {
 				match := subOneofStructRx.FindStringSubmatch(comment.Text)
@@ -120,10 +120,13 @@ func parseFile(inputPath string, xxxSkip []string) (areas aeraContainer, err err
 				}
 			}
 
+			//
 			for _, comment := range field.Doc.List {
+				// Store data for oneof tags in a separate collection first
 				varName, oneofTag := tagOneofFromComment(comment.Text)
 				if varName != "" {
 					varName = strings.Title(varName)
+					// The generated struct name has mangleName as part of it (but not necessary equal
 					mangleName := fmt.Sprintf("%s_%s", typeSpec.Name.String(), varName)
 					for _, structName := range oneofStructs {
 						if strings.Contains(structName, mangleName) {
@@ -138,8 +141,6 @@ func parseFile(inputPath string, xxxSkip []string) (areas aeraContainer, err err
 					continue
 				}
 				currentTag := field.Tag.Value
-				fmt.Printf("Field %v\n", field.Names)
-				fmt.Printf("Current tag %s\n", currentTag)
 				area := textArea{
 					Start:      int(field.Pos()),
 					End:        int(field.End()),
@@ -150,7 +151,7 @@ func parseFile(inputPath string, xxxSkip []string) (areas aeraContainer, err err
 			}
 		}
 	}
-	//TODO Redo a pass to injects tags according infos from oneof tags
+	// Redo a second pass to retrieve all the generated structs where to inject oneof tags
 	for _, decl := range f.Decls {
 		// check if is generic declaration
 		genDecl, ok := decl.(*ast.GenDecl)
@@ -192,13 +193,10 @@ func parseFile(inputPath string, xxxSkip []string) (areas aeraContainer, err err
 		}
 		areas = append(areas, area)
 	}
+	// Sort Text areas by position to make sure that the intervals increase correctly when we rewrite file
 	sort.Sort(areas)
 	log.Printf("parsed file %q, number of fields to inject custom tags: %d", inputPath, len(areas))
 	return
-}
-
-func aeraReorder(aeras []textArea) {
-
 }
 
 func writeFile(inputPath string, areas aeraContainer) (err error) {

@@ -18,7 +18,6 @@ func tagOneofFromComment(comment string) (name string, tag string) {
 	if len(match) == 3 {
 		tag = match[2]
 		name = match[1]
-		fmt.Printf("Oneof tag Match: %s for variable %s\n",tag, name)
 	}
 	return
 }
